@@ -7,7 +7,7 @@ import (
 
 // Discover smart plugs on the local network
 func Discover() error {
-	addr, err := net.ResolveUDPAddr("udp", "255.255.255.255")
+	addr, err := net.ResolveUDPAddr("udp", "255.255.255.255:20002")
 	if err != nil {
 		return err
 	}
