@@ -1,4 +1,4 @@
-package plug
+package hs110
 
 import (
 	"fmt"
