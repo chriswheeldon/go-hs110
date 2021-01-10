@@ -1,21 +1,26 @@
 package hs110
 
 import (
-	"fmt"
+	"encoding/json"
 	"net"
+	"time"
 )
 
-// Discover smart plugs on the local network
-func Discover() error {
-	addr, err := net.ResolveUDPAddr("udp", "255.255.255.255:20002")
+type deviceResult struct {
+	Addr  string `json:"ip"`
+	Model string `json:"device_model"`
+}
+
+// Device discovery response
+type Device struct {
+	Result deviceResult `json:"result"`
+}
+
+func broadcastMagic(conn *net.UDPConn) error {
+	broadcast, err := net.ResolveUDPAddr("udp4", "255.255.255.255:20002")
 	if err != nil {
 		return err
 	}
-	conn, err := net.DialUDP("udp", nil, addr)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
 
 	magic := []byte{
 		0x02, 0x00, 0x00, 0x01,
@@ -23,19 +28,50 @@ func Discover() error {
 		0x00, 0x00, 0x00, 0x00,
 		0x46, 0x3c, 0xb5, 0xd3}
 
-	_, err = conn.Write(magic)
+	_, err = conn.WriteTo(magic, broadcast)
 	if err != nil {
 		return err
 	}
+	return nil
+}
 
+func readResponse(conn *net.UDPConn) (*Device, error) {
 	buffer := make([]byte, 512)
 	n, err := conn.Read(buffer)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	response := string(buffer[:n])
-	fmt.Println("Discovered", response)
+	device := new(Device)
+	err = json.Unmarshal(buffer[16:n], device)
+	if err != nil {
+		return nil, err
+	}
 
-	return nil
+	return device, nil
+}
+
+// Discover smart plugs on the local network
+func Discover() (*Device, error) {
+	listen, err := net.ResolveUDPAddr("udp", ":0")
+	if err != nil {
+		return nil, err
+	}
+
+	conn, err := net.ListenUDP("udp", listen)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	err = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	if err != nil {
+		return nil, err
+	}
+
+	err = broadcastMagic(conn)
+	if err != nil {
+		return nil, err
+	}
+	return readResponse(conn)
 }
