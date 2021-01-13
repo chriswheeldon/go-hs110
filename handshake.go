@@ -41,6 +41,7 @@ func handshake1(device *Device, client *http.Client) (*handshakeData, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer response.Body.Close()
 
 	if response.ContentLength != 48 {
 		return nil, fmt.Errorf("Invalid %s response length", path)
@@ -77,10 +78,11 @@ func handshake2(device *Device, data *handshakeData, client *http.Client) error 
 		url.String(),
 		"application/octet-stream",
 		bytes.NewReader(signature[:]))
-
 	if err != nil {
 		return err
 	}
+	defer response.Body.Close()
+
 	if response.StatusCode != 200 {
 		return fmt.Errorf("Status %d", response.StatusCode)
 	}
