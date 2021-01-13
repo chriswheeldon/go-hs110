@@ -11,9 +11,14 @@ type deviceResult struct {
 	Model string `json:"device_model"`
 }
 
+type deviceJSON struct {
+	Result deviceResult `json:"result"`
+}
+
 // Device discovery response
 type Device struct {
-	Result deviceResult `json:"result"`
+	Addr  net.IP
+	Model string
 }
 
 func broadcastMagic(conn *net.UDPConn) error {
@@ -42,11 +47,15 @@ func readResponse(conn *net.UDPConn) (*Device, error) {
 		return nil, err
 	}
 
-	device := new(Device)
-	err = json.Unmarshal(buffer[16:n], device)
+	response := deviceJSON{}
+	err = json.Unmarshal(buffer[16:n], &response)
 	if err != nil {
 		return nil, err
 	}
+
+	device := new(Device)
+	device.Model = response.Result.Model
+	device.Addr = net.ParseIP(response.Result.Addr)
 
 	return device, nil
 }
