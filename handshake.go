@@ -11,12 +11,6 @@ import (
 	"net/url"
 )
 
-type handshakeData struct {
-	credentials []byte
-	localSeed   []byte
-	remoteSeed  []byte
-}
-
 func makeURL(device *Device, path string) url.URL {
 	url := url.URL{}
 	url.Host = device.Addr.String()
@@ -25,11 +19,10 @@ func makeURL(device *Device, path string) url.URL {
 	return url
 }
 
-func handshake1(device *Device, client *http.Client) (*handshakeData, error) {
-	localSeed := make([]byte, 16)
-	_, err := rand.Read(localSeed)
+func handshake1(device *Device, state *HandshakeState, client *http.Client) error {
+	_, err := rand.Read(state.LocalSeed[:])
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	path := "/app/handshake1"
@@ -37,42 +30,39 @@ func handshake1(device *Device, client *http.Client) (*handshakeData, error) {
 	response, err := client.Post(
 		url.String(),
 		"application/octet-stream",
-		bytes.NewReader(localSeed))
+		bytes.NewReader(state.LocalSeed[:]))
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer response.Body.Close()
 
 	if response.ContentLength != 48 {
-		return nil, fmt.Errorf("Invalid %s response length", path)
+		return fmt.Errorf("Invalid %s response length", path)
 	}
 	if response.StatusCode != 200 {
-		return nil, fmt.Errorf("Status %d", response.StatusCode)
+		return fmt.Errorf("Failed /app/handshake1, status %d", response.StatusCode)
 	}
 
 	body := make([]byte, 48)
 	_, err = io.ReadFull(response.Body, body)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	data := new(handshakeData)
-	data.localSeed = localSeed
-	data.remoteSeed = body[0:16]
-	data.credentials = Credentials()
+	copy(state.RemoteSeed[:], body)
+	state.Credentials = Credentials()
 
-	signature := sha256.Sum256(append(localSeed, data.credentials...))
+	signature := sha256.Sum256(Concat(state.LocalSeed[:], state.Credentials[:]))
 	if !bytes.Equal(signature[:], body[16:]) {
-		return nil, fmt.Errorf("Invalid signature")
+		return fmt.Errorf("Invalid signature")
 	}
-
-	return data, nil
+	return nil
 }
 
-func handshake2(device *Device, data *handshakeData, client *http.Client) error {
-	signature := sha256.Sum256(append(data.remoteSeed, data.credentials...))
+func handshake2(device *Device, state *HandshakeState, client *http.Client) error {
+	signature := sha256.Sum256(Concat(state.RemoteSeed[:], state.Credentials[:]))
 
-	path := "/app/handshake1"
+	path := "/app/handshake2"
 	url := makeURL(device, path)
 	response, err := client.Post(
 		url.String(),
@@ -84,25 +74,29 @@ func handshake2(device *Device, data *handshakeData, client *http.Client) error 
 	defer response.Body.Close()
 
 	if response.StatusCode != 200 {
-		return fmt.Errorf("Status %d", response.StatusCode)
+		return fmt.Errorf("Failed /app/handshake2, %d", response.StatusCode)
 	}
 
 	return nil
 }
 
 // Handshake with the given device
-func Handshake(device *Device) error {
+func Handshake(device *Device) (*Session, error) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	client := &http.Client{
 		Jar: jar,
 	}
-	data, err := handshake1(device, client)
+	var state HandshakeState
+	err = handshake1(device, &state, client)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	err = handshake2(device, data, client)
-	return nil
+	err = handshake2(device, &state, client)
+	if err != nil {
+		return nil, err
+	}
+	return NewSession(state, client), nil
 }
