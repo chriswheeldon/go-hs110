@@ -12,8 +12,9 @@ import (
 )
 
 type handshakeData struct {
-	localSeed  []byte
-	remoteSeed []byte
+	credentials []byte
+	localSeed   []byte
+	remoteSeed  []byte
 }
 
 func makeURL(device *Device, path string) url.URL {
@@ -44,6 +45,9 @@ func handshake1(device *Device, client *http.Client) (*handshakeData, error) {
 	if response.ContentLength != 48 {
 		return nil, fmt.Errorf("Invalid %s response length", path)
 	}
+	if response.StatusCode != 200 {
+		return nil, fmt.Errorf("Status %d", response.StatusCode)
+	}
 
 	body := make([]byte, 48)
 	_, err = io.ReadFull(response.Body, body)
@@ -51,17 +55,37 @@ func handshake1(device *Device, client *http.Client) (*handshakeData, error) {
 		return nil, err
 	}
 
-	credentials := Credentials()
-	signature := sha256.Sum256(append(localSeed, credentials[:]...))
+	data := new(handshakeData)
+	data.localSeed = localSeed
+	data.remoteSeed = body[0:16]
+	data.credentials = Credentials()
+
+	signature := sha256.Sum256(append(localSeed, data.credentials...))
 	if !bytes.Equal(signature[:], body[16:]) {
 		return nil, fmt.Errorf("Invalid signature")
 	}
 
-	data := new(handshakeData)
-	data.localSeed = localSeed
-	data.remoteSeed = body[0:16]
-
 	return data, nil
+}
+
+func handshake2(device *Device, data *handshakeData, client *http.Client) error {
+	signature := sha256.Sum256(append(data.remoteSeed, data.credentials...))
+
+	path := "/app/handshake1"
+	url := makeURL(device, path)
+	response, err := client.Post(
+		url.String(),
+		"application/octet-stream",
+		bytes.NewReader(signature[:]))
+
+	if err != nil {
+		return err
+	}
+	if response.StatusCode != 200 {
+		return fmt.Errorf("Status %d", response.StatusCode)
+	}
+
+	return nil
 }
 
 // Handshake with the given device
@@ -73,9 +97,10 @@ func Handshake(device *Device) error {
 	client := &http.Client{
 		Jar: jar,
 	}
-	_, err = handshake1(device, client)
+	data, err := handshake1(device, client)
 	if err != nil {
 		return err
 	}
+	err = handshake2(device, data, client)
 	return nil
 }
