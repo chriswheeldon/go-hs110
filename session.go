@@ -1,13 +1,18 @@
 package hs110
 
 import (
+	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/sha256"
 	"encoding/binary"
+	"fmt"
 	"net/http"
 )
 
 // Session manages the stateful plug encryption
 type Session struct {
+	device    *Device
 	client    *http.Client
 	key       [16]byte
 	iv        [12]byte
@@ -16,13 +21,60 @@ type Session struct {
 }
 
 // NewSession constructs a Session struct
-func NewSession(handshake HandshakeState, client *http.Client) *Session {
+func NewSession(device *Device, handshake HandshakeState, client *http.Client) *Session {
 	session := new(Session)
+	session.device = device
 	session.client = client
 	session.key = deriveKey(handshake)
 	session.iv, session.counter = deriveIv(handshake)
 	session.signature = deriveSig(handshake)
 	return session
+}
+
+// Send a message over the given session
+func Send(session Session, message []byte) error {
+	session.counter++
+	session.counter &= 0x7fffffff
+	ciphertext, err := encrypt(session, message)
+	if err != nil {
+		return err
+	}
+	path := fmt.Sprintf("/app/request?seq=%d", session.counter)
+	url := MakeURL(session.device, path)
+	response, err := session.client.Post(
+		url.String(),
+		"application/octet-stream",
+		bytes.NewReader(ciphertext))
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	return nil
+}
+
+func encrypt(session Session, message []byte) ([]byte, error) {
+	plaintext, err := PKCS7Pad(message, aes.BlockSize)
+	if err != nil {
+		return nil, err
+	}
+	iv := getRequestIv(session)
+	mac := getRequestMAC(session, message)
+	ciphertext := make([]byte, len(plaintext))
+
+	block, _ := aes.NewCipher(session.key[:])
+	mode := cipher.NewCBCEncrypter(block, iv[:])
+	mode.CryptBlocks(ciphertext, plaintext)
+	return Concat(mac[:], ciphertext), nil
+}
+
+func decrypt(session Session, ciphertext []byte) ([]byte, error) {
+	iv := getRequestIv(session)
+	plaintext := make([]byte, len(ciphertext))
+
+	block, _ := aes.NewCipher(session.key[:])
+	mode := cipher.NewCBCEncrypter(block, iv[:])
+	mode.CryptBlocks(plaintext, ciphertext[32:]) // TODO: check mac
+	return PKCS7Unpad(plaintext, aes.BlockSize)
 }
 
 // Private methods

@@ -8,16 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/cookiejar"
-	"net/url"
 )
-
-func makeURL(device *Device, path string) url.URL {
-	url := url.URL{}
-	url.Host = device.Addr.String()
-	url.Scheme = "http"
-	url.Path = path
-	return url
-}
 
 func handshake1(device *Device, state *HandshakeState, client *http.Client) error {
 	_, err := rand.Read(state.LocalSeed[:])
@@ -26,7 +17,7 @@ func handshake1(device *Device, state *HandshakeState, client *http.Client) erro
 	}
 
 	path := "/app/handshake1"
-	url := makeURL(device, path)
+	url := MakeURL(device, path)
 	response, err := client.Post(
 		url.String(),
 		"application/octet-stream",
@@ -63,7 +54,7 @@ func handshake2(device *Device, state *HandshakeState, client *http.Client) erro
 	signature := sha256.Sum256(Concat(state.RemoteSeed[:], state.Credentials[:]))
 
 	path := "/app/handshake2"
-	url := makeURL(device, path)
+	url := MakeURL(device, path)
 	response, err := client.Post(
 		url.String(),
 		"application/octet-stream",
@@ -98,5 +89,5 @@ func Handshake(device *Device) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewSession(state, client), nil
+	return NewSession(device, state, client), nil
 }
