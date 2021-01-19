@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net/http"
+	"net/url"
 )
 
 // Session manages the stateful plug encryption
@@ -32,17 +33,21 @@ func NewSession(device *Device, handshake HandshakeState, client *http.Client) *
 }
 
 // Send a message over the given session
-func Send(session Session, message []byte) error {
+func (session *Session) Send(message []byte) error {
 	session.counter++
 	session.counter &= 0x7fffffff
 	ciphertext, err := encrypt(session, message)
 	if err != nil {
 		return err
 	}
-	path := fmt.Sprintf("/app/request?seq=%d", session.counter)
-	url := MakeURL(session.device, path)
+
+	u := MakeURL(session.device, "/app/request")
+	query := url.Values{}
+	query.Set("seq", fmt.Sprint(session.counter))
+	u.RawQuery = query.Encode()
+
 	response, err := session.client.Post(
-		url.String(),
+		u.String(),
 		"application/octet-stream",
 		bytes.NewReader(ciphertext))
 	if err != nil {
@@ -52,7 +57,13 @@ func Send(session Session, message []byte) error {
 	return nil
 }
 
-func encrypt(session Session, message []byte) ([]byte, error) {
+// SanityCheck communication over the session
+func (session *Session) SanityCheck() error {
+	message := []byte("{\"system\":{\"get_sysinfo\":null}}")
+	return session.Send(message)
+}
+
+func encrypt(session *Session, message []byte) ([]byte, error) {
 	plaintext, err := PKCS7Pad(message, aes.BlockSize)
 	if err != nil {
 		return nil, err
@@ -67,7 +78,7 @@ func encrypt(session Session, message []byte) ([]byte, error) {
 	return Concat(mac[:], ciphertext), nil
 }
 
-func decrypt(session Session, ciphertext []byte) ([]byte, error) {
+func decrypt(session *Session, ciphertext []byte) ([]byte, error) {
 	iv := getRequestIv(session)
 	plaintext := make([]byte, len(ciphertext))
 
@@ -79,14 +90,14 @@ func decrypt(session Session, ciphertext []byte) ([]byte, error) {
 
 // Private methods
 
-func getRequestIv(session Session) [16]byte {
+func getRequestIv(session *Session) [16]byte {
 	var iv [16]byte
 	copy(iv[:], session.iv[:])
 	binary.BigEndian.PutUint32(iv[12:], session.counter)
 	return iv
 }
 
-func getRequestMAC(session Session, message []byte) [32]byte {
+func getRequestMAC(session *Session, message []byte) [32]byte {
 	var counter [4]byte
 	binary.BigEndian.PutUint32(counter[:], session.counter)
 	return sha256.Sum256(Concat(session.signature[:], counter[:], message))
