@@ -46,10 +46,12 @@ func (session *Session) Send(message []byte) error {
 	query.Set("seq", fmt.Sprint(session.counter))
 	u.RawQuery = query.Encode()
 
-	response, err := session.client.Post(
-		u.String(),
-		"application/octet-stream",
-		bytes.NewReader(ciphertext))
+	request, err := http.NewRequest("POST", u.String(), bytes.NewReader(ciphertext))
+	if err != nil {
+		return err
+	}
+
+	response, err := session.client.Do(request)
 	if err != nil {
 		return err
 	}
@@ -69,12 +71,16 @@ func encrypt(session *Session, message []byte) ([]byte, error) {
 		return nil, err
 	}
 	iv := getRequestIv(session)
-	mac := getRequestMAC(session, message)
 	ciphertext := make([]byte, len(plaintext))
 
-	block, _ := aes.NewCipher(session.key[:])
+	block, err := aes.NewCipher(session.key[:])
+	if err != nil {
+		return nil, err
+	}
+
 	mode := cipher.NewCBCEncrypter(block, iv[:])
 	mode.CryptBlocks(ciphertext, plaintext)
+	mac := getRequestMAC(session, ciphertext)
 	return Concat(mac[:], ciphertext), nil
 }
 

@@ -77,8 +77,10 @@ func Handshake(device *Device) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
+	transport := http.Transport{DisableCompression: true}
 	client := &http.Client{
-		Jar: jar,
+		Jar:       jar,
+		Transport: &transport,
 	}
 	var state HandshakeState
 	err = handshake1(device, &state, client)
