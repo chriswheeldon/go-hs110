@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 )
@@ -33,12 +34,12 @@ func NewSession(device *Device, handshake HandshakeState, client *http.Client) *
 }
 
 // Send a message over the given session
-func (session *Session) Send(message []byte) error {
+func (session *Session) Send(message []byte) ([]byte, error) {
 	session.counter++
 	session.counter &= 0x7fffffff
 	ciphertext, err := encrypt(session, message)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	u := MakeURL(session.device, "/app/request")
@@ -48,19 +49,33 @@ func (session *Session) Send(message []byte) error {
 
 	request, err := http.NewRequest("POST", u.String(), bytes.NewReader(ciphertext))
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	response, err := session.client.Do(request)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer response.Body.Close()
-	return nil
+	if response.StatusCode != 200 {
+		return nil, fmt.Errorf("Failed /app/request, %d", response.StatusCode)
+	}
+
+	buf := make([]byte, int(response.ContentLength))
+	_, err = io.ReadFull(response.Body, buf)
+	if err != nil {
+		return nil, err
+	}
+
+	plaintext, err := decrypt(session, buf)
+	if err != nil {
+		return nil, err
+	}
+	return plaintext, nil
 }
 
 // SanityCheck communication over the session
-func (session *Session) SanityCheck() error {
+func (session *Session) SanityCheck() ([]byte, error) {
 	message := []byte("{\"system\":{\"get_sysinfo\":null}}")
 	return session.Send(message)
 }
@@ -86,10 +101,10 @@ func encrypt(session *Session, message []byte) ([]byte, error) {
 
 func decrypt(session *Session, ciphertext []byte) ([]byte, error) {
 	iv := getRequestIv(session)
-	plaintext := make([]byte, len(ciphertext))
+	plaintext := make([]byte, len(ciphertext)-32)
 
 	block, _ := aes.NewCipher(session.key[:])
-	mode := cipher.NewCBCEncrypter(block, iv[:])
+	mode := cipher.NewCBCDecrypter(block, iv[:])
 	mode.CryptBlocks(plaintext, ciphertext[32:]) // TODO: check mac
 	return PKCS7Unpad(plaintext, aes.BlockSize)
 }

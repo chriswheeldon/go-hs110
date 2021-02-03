@@ -72,7 +72,7 @@ func handshake2(device *Device, state *HandshakeState, client *http.Client) erro
 }
 
 // Handshake with the given device
-func Handshake(device *Device) (*Session, error) {
+func Handshake(device *Device) (*Plug, error) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		return nil, err
@@ -91,5 +91,5 @@ func Handshake(device *Device) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewSession(device, state, client), nil
+	return NewPlug(NewSession(device, state, client)), nil
 }
